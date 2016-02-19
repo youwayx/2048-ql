@@ -4,8 +4,19 @@ from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from util import TILES
 
+CHROMEDRIVER_DIR = 'venv/bin/chromedriver'
 
-def read_screen(driver, image):
+def read_screen(driver):
+    """Reads the 2048 board.
+
+    Takes a screenshot of the browser window and gets the values
+    in the 2048 board.
+
+    Args:
+        driver: webdriver
+    Returns:
+        grid: a 4x4 list containing the 2048 grid
+    """
     image_dir = '2048.png'
     screenshot = driver.get_screenshot_as_png()
     outf = open(image_dir, 'w')
@@ -28,12 +39,9 @@ def read_screen(driver, image):
     return grid
 
 
-
-driver = webdriver.Chrome('venv/bin/chromedriver')  # chromedriver in virtualenv
+driver = webdriver.Chrome(CHROMEDRIVER_DIR)  
 driver.delete_all_cookies()
 driver.get("http://gabrielecirulli.github.io/2048/")
-
-assert "2048" in driver.title
 
 #disable animation
 with open("without-animation.js", "r") as myfile: 
