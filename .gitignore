@@ -1,0 +1,6 @@
+venv/
+*.pyc
+*.DS_Store
+test.py
+phantomjs/
+2048.png
