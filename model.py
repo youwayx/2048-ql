@@ -13,18 +13,18 @@ def network(inpt):
         out: Tensor representing output layer of the network.
     """
     with tf.variable_scope('fc1') as scope:
-        W_1 = tf.placeholder(tf.float32, [16, 48])
-        b_1 = tf.placeholder(tf.float32, [48])
+        W_1 = tf.Variable(tf.truncated_normal([16, 48], stddev=0.1))
+        b_1 = tf.Variable(tf.zeros( [48]))
 
-        h_1 = tf.matmul(W_1, inpt) + b_1
+        h_1 = tf.matmul(inpt, W_1) + b_1
 
     with tf.variable_scope('fc2') as scope:
-        W_2 = tf.placeholder(tf.float32, [48, 4])
-        b_2 = tf.placeholder(tf.float32, [4])
+        W_2 = tf.Variable(tf.truncated_normal([48, 4]))
+        b_2 = tf.Variable(tf.zeros([4]))
 
-        h_2 = tf.matmul(W_2, h_1) + b_2
+        out = tf.matmul(h_1, W_2) + b_2
 
-    out = tf.nn.softmax(h_2)
+    return out
 
 def loss(net, labels):
     """Calculates loss for the network.
@@ -58,3 +58,5 @@ def train(loss):
     
     return apply_gradient_op
 
+def feed_forward(net, feed_dict, session):
+    return net.eval(feed_dict=feed_dict, session=session)
