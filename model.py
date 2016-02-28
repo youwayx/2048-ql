@@ -16,13 +16,13 @@ def network(inpt):
         W_1 = tf.Variable(tf.truncated_normal([16, 48], stddev=0.1))
         b_1 = tf.Variable(tf.zeros( [48]))
 
-        h_1 = tf.matmul(inpt, W_1) + b_1
+        h_1 = tf.nn.relu(tf.matmul(inpt, W_1) + b_1)
 
     with tf.variable_scope('fc2') as scope:
-        W_2 = tf.Variable(tf.truncated_normal([48, 4]))
+        W_2 = tf.Variable(tf.truncated_normal([48, 4], stddev=0.1))
         b_2 = tf.Variable(tf.zeros([4]))
 
-        out = tf.matmul(h_1, W_2) + b_2
+        out = tf.nn.relu(tf.matmul(h_1, W_2) + b_2)
 
     return out
 
