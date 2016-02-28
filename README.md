@@ -1,5 +1,8 @@
 # 2048-ql
 
+Still a work in progress
+
+
 ## Getting Started
 
 ### Set up virtualenv 
