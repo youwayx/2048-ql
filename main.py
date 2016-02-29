@@ -1,21 +1,28 @@
 import model
 import numpy as np
+import os
+import random
 import tensorflow as tf
 import time
+import re
 
 from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
-from util import TILES, flatten, normalize, convert_to_board
+from selenium.common.exceptions import StaleElementReferenceException
+from util import TILES, flatten, normalize
 
 
 CHROMEDRIVER_DIR = 'venv/bin/chromedriver'
+MODEL_PATH = os.getcwd() + "/model.ckpt"
 
 # setup
+random.seed(12345)
 driver = webdriver.Chrome(CHROMEDRIVER_DIR)
 inpt = tf.placeholder(tf.float32, [None, 16])
 q_network = model.network(inpt)
-session = tf.Session()
+sess = tf.Session()
+saver = tf.train.Saver()
 
 # using monitor with resolution 2560 x 1440
 window_size = 1280
@@ -23,6 +30,8 @@ left_corner = (802, 582)
 block_size = 242
 # left_corner = (401, 292)
 # block_size = 121
+# retry_button_class = 'retry-button'
+# keep_going_button_class = 'keep-playing-button'
 
 def read_screen_with_image():
     """Reads the 2048 board.
@@ -56,7 +65,7 @@ def read_screen_with_image():
     return grid
 
 def read_screen():
-     """Reads the 2048 board.
+    """Reads the 2048 board.
 
     Reads screen by parsing the div classes containing the tiles.
     Much cleaner than read_screen_with_image().
@@ -65,12 +74,38 @@ def read_screen():
         grid: a 4x4 list containing the 2048 grid
     """
     tile_container = driver.find_element_by_class_name('tile-container')
-    divs = tile_container.find_elements_by_tag_name('div')
+    attempts = 5
+    divs = []
+    while attempts > 0:
+        attempts -= 1
+        try:
+            divs = tile_container.find_elements_by_tag_name('div')
+            break
+        except:
+            print "stale element, trying again"
+            
     grid_classes = []
     for div in divs:
         grid_classes.append(div.get_attribute('class').split(" "))
 
-    grid = convert_to_board(grid_classes)
+    grid = [[0, 0, 0, 0] for i in range (4)]
+
+    tile_regex = '^tile\-[0-9]+$'
+    position_regex = '^tile\-position\-.+$'
+
+    for grid_class in grid_classes:
+        tile_class = filter(lambda x: re.match(tile_regex, x), grid_class)
+        position_class = filter(lambda x: re.match(position_regex, x), grid_class)
+
+        if tile_class == [] or position_class == []:
+            continue
+
+        tile_value = int(tile_class[0].split("-")[-1])
+        pos_split = position_class[0].split("-")
+        col = int(pos_split[-2]) - 1
+        row = int(pos_split[-1]) - 1
+
+        grid[row][col] = tile_value
 
     return grid
 
@@ -84,36 +119,78 @@ def init():
     driver.execute_script(data)
 
 def train():
-    experiences = []
-    element = driver.find_element_by_tag_name("body")
-    score = 0
+    # Training parameters
+    batch_size = 2
+    discount = 0.9
     epochs = 10000
-    for c in range (epochs):
-        board = read_screen()
-       
-        normalized_board = normalize(board)
-        inpt_board = flatten(normalized_board)
-        feed_dict = {inpt: inpt_board}
-        output = model.feed_forward(q_network, feed_dict, session)
+    epsilon = 1
 
-        actions = [i[0] for i in sorted(enumerate(output[0]), key=lambda x:x[1])]
+    # Experience Replay Memory
+    experiences = []
+
+    score = 0
+    board = read_screen()
+    inpt_board = flatten(normalize(board))
+
+    for c in range (epochs):
+        element = driver.find_element_by_tag_name("body")
+        feed_dict = {inpt: inpt_board.reshape((1,16))}
+
+        action_indices = []
         action = -1
-        for i in range (3, -1, -1):
-            move(element, actions[i])
+
+        # Epsilon-greedy action selection
+        epsilon = max(1 - float(c) / epochs * 2, 0.1)
+        rand = random.random()
+        if rand < epsilon:
+            action_indices = [0,1,2,3]
+            random.shuffle(action_indices)
+        else:
+            values = model.feed_forward(q_network, feed_dict, sess)
+            action_indices = [i[0] for i in sorted(enumerate(values[0]), key=lambda x:x[1], reverse=True)]
+
+        for i in range (4):
+            move(element, action_indices[i])
+            time.sleep(.1)
             new_board = read_screen()
             if new_board != board:
-                action = actions[i]
+                action = action_indices[i]
                 break
 
-        time.sleep(.2) # delay due to score update
+        # if none of the actions are valid, restart the game
+        if action == -1:
+            driver.find_element_by_class_name("restart-button").click()
+
         score_text = driver.find_element_by_class_name('score-container').text
         new_score = int(score_text.split("\n")[0])
         reward = new_score - score
         score = new_score
+        next_inpt_board = flatten(normalize(new_board))
 
-        experience = [board, action, reward, new_board]
+        # Save experience
+        one_hot_reward = np.zeros((4))
+        one_hot_reward[action] = reward
+        experience = [inpt_board, one_hot_reward, next_inpt_board]
         experiences.append(experience)
+
+        # Update board
+        board = new_board
+        inpt_board = next_inpt_board
         
+        # Train the model using experience replay
+        if c > 0 and c % batch_size == 0 and batch_size < len(experiences):
+            sample = random.sample(experiences, batch_size)
+            last_states = np.array(map(lambda x: x[2], sample))
+            rewards = np.array(map(lambda x: x[1], sample))
+
+            feed_dict = {inpt: last_states}
+            values = model.feed_forward(q_network, feed_dict, sess)
+
+            y = np.add(rewards, discount * values)
+            loss = tf.reduce_sum(tf.square(y - q_network))
+            grad_op = model.train(loss)
+            save_path = saver.save(sess, MODEL_PATH)
+
 
 def move(element, action):
     if action == 0:
@@ -128,11 +205,18 @@ def move(element, action):
    
 # main
 driver.set_window_size(window_size, window_size)
-session.run(tf.initialize_all_variables())
+if os.path.isfile(MODEL_PATH):
+    saver.restore(sess, MODEL_PATH)
+else:
+    init_op = tf.initialize_all_variables()
+    sess.run(init_op)
+
 init()
+
 
 restart = driver.find_element_by_class_name("restart-button")
 restart.click()
+time.sleep(0.5) # allow game to load
 
 train()
 

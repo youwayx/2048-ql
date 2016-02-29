@@ -1,6 +1,5 @@
 import math
 import numpy as np
-import re
 
 
 TILES = {(245, 149, 99): 16, (237, 194, 46): 2048, 
@@ -38,27 +37,7 @@ def normalize(board):
     return normalized
 
 def flatten(board):
+    """Takes 4x4 list and flattens it a (16) numpy vector"""
     vec = np.array(board, dtype="float")
-    return np.reshape(vec, (1, 16))
+    return np.reshape(vec, (16))
 
-def convert_to_board(grid_classes):
-    grid = [[0, 0, 0, 0] for i in range (4)]
-
-    tile_regex = '^tile\-[0-9]+$'
-    position_regex = '^tile\-position\-.+$'
-
-    for grid_class in grid_classes:
-        tile_class = filter(lambda x: re.match(tile_regex, x), grid_class)
-        position_class = filter(lambda x: re.match(position_regex, x), grid_class)
-
-        if tile_class == [] or position_class == []:
-            continue
-
-        tile_value = int(tile_class[0].split("-")[-1])
-        pos_split = position_class[0].split("-")
-        col = int(pos_split[-2]) - 1
-        row = int(pos_split[-1]) - 1
-
-        grid[row][col] = tile_value
-
-    return grid

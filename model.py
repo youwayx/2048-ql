@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 
 
-LEARNING_RATE = 0.1       # Learning rate.
+LEARNING_RATE = 0.001       # Learning rate.
 
 def network(inpt):
     """Builds the neural network to approximate Q function
@@ -49,8 +49,8 @@ def train(loss):
     Returns:
         apply_gradient_op: op for training
     """
-    opt = tf.train.GradientDescentOptimizer(LEARNING_RATE)
-    grads = opt.compute_gradients(total_loss)
+    opt = tf.train.AdamOptimizer(LEARNING_RATE)
+    grads = opt.compute_gradients(loss)
 
     apply_gradient_op = opt.apply_gradients(grads)
     
