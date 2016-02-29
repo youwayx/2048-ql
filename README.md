@@ -24,3 +24,5 @@ Chromedriver should be located in `venv/bin/chromedriver`
 
 If you aren't using OS X, place the equivalent executable in `venv/bin/`.
 
+## Credits
+Credits to Mikhail Sannikov's [2048 bot](https://github.com/Atarity/2048-solver-bot) for `without-animation.js` and inspiration to use [Selenium](http://selenium-python.readthedocs.org/).
