@@ -2,6 +2,7 @@ import argparse
 import model
 import numpy as np
 import os
+import pickle
 import random
 import tensorflow as tf
 import time
@@ -20,6 +21,7 @@ args = parser.parse_args()
 
 CHROMEDRIVER_DIR = 'venv/bin/chromedriver'
 MODEL_PATH = os.getcwd() + "/model.ckpt"
+EXPERIENCES_PATH = os.getcwd() + "/experiences.p"
 LOCAL = 'local'
 WEB = 'web'
 
@@ -127,6 +129,10 @@ def get_board(env, game=None):
     else:
         return read_screen()
 
+def display_board(board):
+    for i in range(4):
+        print board[i]
+
 def init():
     driver.delete_all_cookies()
     driver.get("http://gabrielecirulli.github.io/2048/")
@@ -138,16 +144,33 @@ def init():
 
 def train(env):
     # Training parameters
-    batch_size = 2
+    batch_size = 16
     discount = 0.9
-    epochs = 10000
+    epochs = 1000000
     epsilon = 1
 
     # Experience Replay Memory
+    data = {}
     experiences = []
+    epochs_trained = 0
+    max_exps = 1000
+    index = 0
+    if os.path.isfile(EXPERIENCES_PATH):
+        data = pickle.load(open(EXPERIENCES_PATH, 'rb'))
+        experiences = data['experiences']
+        epochs_trained = data['epochs_trained']
+        max_exps = len(experiences)
+    else:
+        data['experiences'] = []
+        data['epochs_trained'] = 0
+
+    # Print initial training info
+    print "Max # of experiences: %d" % max_exps
+    print "Starting from epoch #%d" % epochs_trained
 
     # Setup
     game = None
+    exp_counter = 0
     if env == LOCAL:
         game = Game()
         game.add_random_tile()
@@ -156,7 +179,7 @@ def train(env):
     board = get_board(env, game)
     inpt_board = flatten(normalize(board))
 
-    for c in range (epochs):
+    for c in range (epochs_trained + 1, epochs):
         if env == WEB:
             game = driver.find_element_by_tag_name("body")
         feed_dict = {inpt: inpt_board.reshape((1,16))}
@@ -165,7 +188,7 @@ def train(env):
         action = -1
 
         # Epsilon-greedy action selection
-        epsilon = max(1 - float(c) / epochs * 2, 0.1)
+        epsilon = max(1 - float(c) / 20000, 0.1)
         rand = random.random()
         if rand < epsilon:
             action_indices = [0,1,2,3]
@@ -174,20 +197,28 @@ def train(env):
             values = model.feed_forward(q_network, feed_dict, sess)
             action_indices = [i[0] for i in sorted(enumerate(values[0]), key=lambda x:x[1], reverse=True)]
 
-        for i in range (4):
-            move(env, game, action_indices[i])
-            time.sleep(.1)
-            new_board = get_board(env, game)
-            if new_board != board:
-                action = action_indices[i]
-                if env == LOCAL:
-                    game.display()
-                    game.add_random_tile()
-                break
+        action, new_board = move(env, game, action_indices)
 
         # if none of the actions are valid, restart the game
         if action == -1:
-            driver.find_element_by_class_name("restart-button").click()
+            if env == LOCAL:
+                game.display()
+                game = Game()
+                game.add_random_tile()
+            else:
+                driver.find_element_by_class_name("restart-button").click()
+                time.sleep(0.5)
+            
+            if exp_counter * 10 > max_exps + 1000:
+                max_exps += 1000
+                print "Resizing # of experiences stored to: %d" % max_exps
+            
+            print "Final Score: %d" % score
+            score = 0
+            exp_counter = 0
+            board = get_board(env, game)
+            inpt_board = flatten(normalize(board))
+            continue
 
         if env == WEB:
             score_text = driver.find_element_by_class_name('score-container').text
@@ -200,10 +231,23 @@ def train(env):
         next_inpt_board = flatten(normalize(new_board))
 
         # Save experience
+        if index >= max_exps:
+            data['experiences'] = experiences
+            data['epochs_trained'] = c
+            pickle.dump(data, open(EXPERIENCES_PATH, 'wb'))
+            print "Experiences saved!"
+            index = 0
+
         one_hot_reward = np.zeros((4))
         one_hot_reward[action] = reward
         experience = [inpt_board, one_hot_reward, next_inpt_board]
-        experiences.append(experience)
+        if max_exps > len(experiences):
+            experiences.append(experience)
+        else:
+            experiences[index] = experience
+
+        index += 1
+        exp_counter += 1
 
         # Update board
         board = new_board
@@ -224,18 +268,33 @@ def train(env):
             save_path = saver.save(sess, MODEL_PATH)
 
 
-def move(env, game, action):
-    if env == LOCAL:
-        game.move(action)
-    else:
-        if action == 0:
-            game.send_keys(Keys.ARROW_UP)
-        elif action == 1:
-            game.send_keys(Keys.ARROW_RIGHT)
-        elif action == 2:
-            game.send_keys(Keys.ARROW_DOWN)
-        elif action == 3:
-            game.send_keys(Keys.ARROW_LEFT)
+def move(env, game, action_indices):
+    for i in range (4):
+        moved = False
+        action = action_indices[i]
+        if env == LOCAL:
+            moved = game.move(action)
+        else:   
+            if action == 0:
+                game.send_keys(Keys.ARROW_UP)
+            elif action == 1:
+                game.send_keys(Keys.ARROW_RIGHT)
+            elif action == 2:
+                game.send_keys(Keys.ARROW_DOWN)
+            elif action == 3:
+                game.send_keys(Keys.ARROW_LEFT)
+            time.sleep(.1)
+            new_board = get_board(env, game)
+            moved = new_board != board
+
+        if moved:
+            if env == LOCAL:
+                game.add_random_tile()
+            
+            new_board = get_board(env, game)
+            return [action, new_board]
+
+    return [-1, None]
 
 
 # main
