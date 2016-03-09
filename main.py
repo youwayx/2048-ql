@@ -1,3 +1,4 @@
+import argparse
 import model
 import numpy as np
 import os
@@ -6,23 +7,33 @@ import tensorflow as tf
 import time
 import re
 
+from game import Game
 from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import StaleElementReferenceException
 from util import TILES, flatten, normalize
 
+parser = argparse.ArgumentParser()
+parser.add_argument('-t', '--train', help='specify web or local training (default web)')
+args = parser.parse_args()
 
 CHROMEDRIVER_DIR = 'venv/bin/chromedriver'
 MODEL_PATH = os.getcwd() + "/model.ckpt"
+LOCAL = 'local'
+WEB = 'web'
 
 # setup
 random.seed(12345)
-driver = webdriver.Chrome(CHROMEDRIVER_DIR)
 inpt = tf.placeholder(tf.float32, [None, 16])
 q_network = model.network(inpt)
 sess = tf.Session()
 saver = tf.train.Saver()
+
+driver = None
+env = LOCAL if args.train == LOCAL else WEB
+if env == WEB:
+    driver = webdriver.Chrome(CHROMEDRIVER_DIR)
 
 # using monitor with resolution 2560 x 1440
 window_size = 1280
@@ -32,6 +43,7 @@ block_size = 242
 # block_size = 121
 # retry_button_class = 'retry-button'
 # keep_going_button_class = 'keep-playing-button'
+
 
 def read_screen_with_image():
     """Reads the 2048 board.
@@ -109,6 +121,12 @@ def read_screen():
 
     return grid
 
+def get_board(env, game=None):
+    if env == LOCAL:
+        return game.grid
+    else:
+        return read_screen()
+
 def init():
     driver.delete_all_cookies()
     driver.get("http://gabrielecirulli.github.io/2048/")
@@ -118,7 +136,7 @@ def init():
         data = myfile.read().replace('\n', '')
     driver.execute_script(data)
 
-def train():
+def train(env):
     # Training parameters
     batch_size = 2
     discount = 0.9
@@ -128,12 +146,19 @@ def train():
     # Experience Replay Memory
     experiences = []
 
+    # Setup
+    game = None
+    if env == LOCAL:
+        game = Game()
+        game.add_random_tile()
+
     score = 0
-    board = read_screen()
+    board = get_board(env, game)
     inpt_board = flatten(normalize(board))
 
     for c in range (epochs):
-        element = driver.find_element_by_tag_name("body")
+        if env == WEB:
+            game = driver.find_element_by_tag_name("body")
         feed_dict = {inpt: inpt_board.reshape((1,16))}
 
         action_indices = []
@@ -150,19 +175,26 @@ def train():
             action_indices = [i[0] for i in sorted(enumerate(values[0]), key=lambda x:x[1], reverse=True)]
 
         for i in range (4):
-            move(element, action_indices[i])
+            move(env, game, action_indices[i])
             time.sleep(.1)
-            new_board = read_screen()
+            new_board = get_board(env, game)
             if new_board != board:
                 action = action_indices[i]
+                if env == LOCAL:
+                    game.display()
+                    game.add_random_tile()
                 break
 
         # if none of the actions are valid, restart the game
         if action == -1:
             driver.find_element_by_class_name("restart-button").click()
 
-        score_text = driver.find_element_by_class_name('score-container').text
-        new_score = int(score_text.split("\n")[0])
+        if env == WEB:
+            score_text = driver.find_element_by_class_name('score-container').text
+            new_score = int(score_text.split("\n")[0])
+        else:
+            new_score = game.score
+
         reward = new_score - score
         score = new_score
         next_inpt_board = flatten(normalize(new_board))
@@ -192,32 +224,34 @@ def train():
             save_path = saver.save(sess, MODEL_PATH)
 
 
-def move(element, action):
-    if action == 0:
-        element.send_keys(Keys.ARROW_UP)
-    elif action == 1:
-        element.send_keys(Keys.ARROW_RIGHT)
-    elif action == 2:
-        element.send_keys(Keys.ARROW_DOWN)
-    elif action == 3:
-        element.send_keys(Keys.ARROW_LEFT)
+def move(env, game, action):
+    if env == LOCAL:
+        game.move(action)
+    else:
+        if action == 0:
+            game.send_keys(Keys.ARROW_UP)
+        elif action == 1:
+            game.send_keys(Keys.ARROW_RIGHT)
+        elif action == 2:
+            game.send_keys(Keys.ARROW_DOWN)
+        elif action == 3:
+            game.send_keys(Keys.ARROW_LEFT)
 
-   
+
 # main
-driver.set_window_size(window_size, window_size)
 if os.path.isfile(MODEL_PATH):
     saver.restore(sess, MODEL_PATH)
 else:
     init_op = tf.initialize_all_variables()
     sess.run(init_op)
 
-init()
+if env == WEB:
+    init()
+    restart = driver.find_element_by_class_name("restart-button")
+    restart.click()
+    time.sleep(0.5) # allow game to load
 
+train(env)
 
-restart = driver.find_element_by_class_name("restart-button")
-restart.click()
-time.sleep(0.5) # allow game to load
-
-train()
-
-driver.quit()
+if env == WEB:
+    driver.quit()

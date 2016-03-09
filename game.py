@@ -52,7 +52,6 @@ class Game:
 
         vector = self.vector_dict[direction]
         traversals = self.get_traversals(vector)
-        print traversals
 
         moved = False  # boolean to track whether any tile has moved
         for i in range (4):
@@ -140,6 +139,7 @@ class Game:
         """Prints the board."""
         for b in self.grid:
             print b
+
 
 
 ## Uncomment below to play the game in the terminal.
