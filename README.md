@@ -1,7 +1,6 @@
 # 2048-ql
 
-Still a work in progress
-
+Implementation of a 2048 AI using Q-Learning and following an algorithm very similar to the one described in [Playing Atari with Deep Reinforcement Learning](https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf). Currently, the AI plays better than random guesses but can't make it to 1024 :(.
 
 ## Getting Started
 
@@ -25,11 +24,16 @@ Chromedriver should be located in `venv/bin/chromedriver`
 
 If you aren't using OS X, place the equivalent executable in `venv/bin/`.
 
-### Start Training
+### Train the Model
+Train the model using Selenium and Chromedriver:
 ```
 (venv)$ python main.py
 ```
-Training in the browser is quite slow. TODO: Implement 2048 and train offline.
+
+Train the model locally, using my Python implementation of 2048:
+```
+(venv)$ python main.py -t local
+```
 
 ## Credits
 Credits to Mikhail Sannikov's [2048 bot](https://github.com/Atarity/2048-solver-bot) for `without-animation.js` and inspiration to use [Selenium](http://selenium-python.readthedocs.org/).
