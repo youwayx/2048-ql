@@ -13,7 +13,7 @@ def get_reward(score_change):
     if score_change == 0:
         return 0
     else: 
-        return score_change / 16
+        return math.log(score_change, 2)/8
 
 def normalize_num(x):
     """

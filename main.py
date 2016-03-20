@@ -130,6 +130,9 @@ def train(inpt, out, env, sess):
     epochs = 5000000
     epsilon = 1
     learning_rate = 1e-6
+    start = 0
+    num_explore = 100000
+    max_exps = 30000
 
     # Loss Function
     y = tf.placeholder("float", [None, 4])
@@ -137,8 +140,11 @@ def train(inpt, out, env, sess):
     train_opt = tf.train.AdamOptimizer(learning_rate).minimize(loss)
     saver = tf.train.Saver()
     if os.path.isfile(MODEL_PATH):
+        print "Loading model."
         saver.restore(sess, MODEL_PATH)
+        start = num_explore + max_exps
     else:
+        print "Initializing new model."
         init_op = tf.initialize_all_variables()
         sess.run(init_op)
 
@@ -147,7 +153,6 @@ def train(inpt, out, env, sess):
     experiences = []
     avg_scores = []
     epochs_trained = 0
-    max_exps = 20000
     index = 0
     if os.path.isfile(EXPERIENCES_PATH):
         data = pickle.load(open(EXPERIENCES_PATH, 'rb'))
@@ -159,10 +164,6 @@ def train(inpt, out, env, sess):
         data['experiences'] = []
         data['epochs_trained'] = 0
         data['avg_scores'] = []
-
-    # Print initial training info
-    print "Max # of experiences: %d" % max_exps
-    print "Starting from epoch #%d" % epochs_trained
 
     # Setup
     game = None
@@ -178,7 +179,8 @@ def train(inpt, out, env, sess):
 
     tot_score_counter = 0
     game_counter = 0
-    for c in range (epochs):
+    avg_score = 0
+    for c in range (start, epochs):
         if env == WEB:
             game = driver.find_element_by_tag_name("body")
         feed_dict = {inpt: inpt_board.reshape((1,16))}
@@ -188,7 +190,7 @@ def train(inpt, out, env, sess):
 
         # Epsilon-greedy action selection
         iterations = max(0, c - max_exps)
-        epsilon = max(1 - float(iterations) / 100000, 0.01)
+        epsilon = max(1 - float(iterations) / num_explore, 0.01)
         rand = random.random()
         if rand < epsilon:
             action_indices = [0,1,2,3]
@@ -275,14 +277,15 @@ def train(inpt, out, env, sess):
         # Train the model using experience replay
         if c > 0 and c % batch_size == 0 and len(experiences) == max_exps:
             sample = random.sample(experiences, batch_size)
-            inpt_batch = np.array(map(lambda x: x[2], sample))
+            next_state = np.array(map(lambda x: x[2], sample))
             rewards = np.array(map(lambda x: x[1], sample))
+            cur_state = np.array(map(lambda x: x[0], sample))
 
-            values = out.eval(feed_dict={inpt: inpt_batch}, session=sess)
+            values = out.eval(feed_dict={inpt: next_state}, session=sess)
 
             y_batch = np.add(rewards, discount * values)
             sess.run([train_opt],feed_dict = {
-                inpt: inpt_batch,
+                inpt: cur_state,
                 y: y_batch})
 
             if c % (batch_size * 1000) == 0:
