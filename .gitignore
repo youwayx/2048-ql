@@ -7,4 +7,6 @@ phantomjs/
 *.ckpt
 *.ckpt.meta
 checkpoint
-experiences.p
+*.p
+test_model.py
+*.txt

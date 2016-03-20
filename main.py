@@ -1,5 +1,4 @@
 import argparse
-import model
 import numpy as np
 import os
 import pickle
@@ -13,70 +12,25 @@ from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import StaleElementReferenceException
-from util import TILES, flatten, normalize
+from util import TILES, flatten, normalize, normalize_num, get_reward
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-t', '--train', help='specify web or local training (default web)')
 args = parser.parse_args()
 
 CHROMEDRIVER_DIR = 'venv/bin/chromedriver'
-MODEL_PATH = os.getcwd() + "/model.ckpt"
-EXPERIENCES_PATH = os.getcwd() + "/experiences.p"
+MODEL_PATH = os.getcwd() + "/abcd.ckpt"
+EXPERIENCES_PATH = os.getcwd() + "/abcd.p"
 LOCAL = 'local'
 WEB = 'web'
-
-# setup
-random.seed(12345)
-inpt = tf.placeholder(tf.float32, [None, 16])
-q_network = model.network(inpt)
-sess = tf.Session()
-saver = tf.train.Saver()
 
 driver = None
 env = LOCAL if args.train == LOCAL else WEB
 if env == WEB:
     driver = webdriver.Chrome(CHROMEDRIVER_DIR)
 
-# using monitor with resolution 2560 x 1440
-window_size = 1280
-left_corner = (802, 582)
-block_size = 242
-# left_corner = (401, 292)
-# block_size = 121
 # retry_button_class = 'retry-button'
 # keep_going_button_class = 'keep-playing-button'
-
-
-def read_screen_with_image():
-    """Reads the 2048 board.
-
-    Takes a screenshot of the browser window and gets the values
-    in the 2048 board.
-
-    Returns:
-        grid: a 4x4 list containing the 2048 grid
-    """
-    image_dir = '2048.png'
-    screenshot = driver.get_screenshot_as_png()
-    outf = open(image_dir, 'w')
-    outf.write(screenshot)
-    outf.close()
-
-    im = Image.open(image_dir)
-    image = im.load()
-
-    grid = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
-    for i in range (4):
-        for j in range (4):
-            x,y = left_corner
-            x += block_size*i
-            y += block_size*j
-            grid[j][i] = image[x,y][0:3]
-   
-    for i in range (4):
-        grid[i] = map(lambda x: TILES[x], grid[i])
-
-    return grid
 
 def read_screen():
     """Reads the 2048 board.
@@ -133,6 +87,33 @@ def display_board(board):
     for i in range(4):
         print board[i]
 
+def network():
+    """Builds the neural network to approximate Q function
+
+    Returns:
+        inpt: Input layer of the network.
+        out: Output layer of the network.
+    """
+
+    inpt = tf.placeholder("float", [None, 16])
+
+    W_1 = tf.Variable(tf.truncated_normal([16, 48], stddev=0.1))
+    b_1 = tf.Variable(tf.constant(0.01, shape=[48]))
+
+    h_1 = tf.nn.relu(tf.matmul(inpt, W_1) + b_1)
+
+    W_2 = tf.Variable(tf.truncated_normal([48, 16], stddev=0.1))
+    b_2 = tf.Variable(tf.constant(0.01, shape=[16]))
+
+    h_2 = tf.nn.relu(tf.matmul(h_1, W_2) + b_2)
+
+    W_3 = tf.Variable(tf.truncated_normal([16, 4], stddev=0.1))
+    b_3 = tf.Variable(tf.constant(0.01, shape=[4]))
+
+    out = tf.nn.relu(tf.matmul(h_2, W_3) + b_3)
+
+    return inpt, out
+
 def init():
     driver.delete_all_cookies()
     driver.get("http://gabrielecirulli.github.io/2048/")
@@ -142,27 +123,42 @@ def init():
         data = myfile.read().replace('\n', '')
     driver.execute_script(data)
 
-def train(env):
+def train(inpt, out, env, sess):
     # Training parameters
-    batch_size = 16
+    batch_size = 32
     discount = 0.9
-    epochs = 1000000
+    epochs = 5000000
     epsilon = 1
+    learning_rate = 1e-6
+
+    # Loss Function
+    y = tf.placeholder("float", [None, 4])
+    loss = tf.reduce_sum(tf.square(y - out))
+    train_opt = tf.train.AdamOptimizer(learning_rate).minimize(loss)
+    saver = tf.train.Saver()
+    if os.path.isfile(MODEL_PATH):
+        saver.restore(sess, MODEL_PATH)
+    else:
+        init_op = tf.initialize_all_variables()
+        sess.run(init_op)
 
     # Experience Replay Memory
     data = {}
     experiences = []
+    avg_scores = []
     epochs_trained = 0
-    max_exps = 1000
+    max_exps = 20000
     index = 0
     if os.path.isfile(EXPERIENCES_PATH):
         data = pickle.load(open(EXPERIENCES_PATH, 'rb'))
         experiences = data['experiences']
         epochs_trained = data['epochs_trained']
+        avg_scores = data['avg_scores']
         max_exps = len(experiences)
     else:
         data['experiences'] = []
         data['epochs_trained'] = 0
+        data['avg_scores'] = []
 
     # Print initial training info
     print "Max # of experiences: %d" % max_exps
@@ -170,7 +166,6 @@ def train(env):
 
     # Setup
     game = None
-    exp_counter = 0
     if env == LOCAL:
         game = Game()
         game.add_random_tile()
@@ -178,8 +173,12 @@ def train(env):
     score = 0
     board = get_board(env, game)
     inpt_board = flatten(normalize(board))
+    prev_inpt_board = None
+    prev_action = -1
 
-    for c in range (epochs_trained + 1, epochs):
+    tot_score_counter = 0
+    game_counter = 0
+    for c in range (epochs):
         if env == WEB:
             game = driver.find_element_by_tag_name("body")
         feed_dict = {inpt: inpt_board.reshape((1,16))}
@@ -188,36 +187,61 @@ def train(env):
         action = -1
 
         # Epsilon-greedy action selection
-        epsilon = max(1 - float(c) / 20000, 0.1)
+        iterations = max(0, c - max_exps)
+        epsilon = max(1 - float(iterations) / 100000, 0.01)
         rand = random.random()
         if rand < epsilon:
             action_indices = [0,1,2,3]
             random.shuffle(action_indices)
         else:
-            values = model.feed_forward(q_network, feed_dict, sess)
+            values = out.eval(feed_dict=feed_dict, session=sess)
             action_indices = [i[0] for i in sorted(enumerate(values[0]), key=lambda x:x[1], reverse=True)]
 
-        action, new_board = move(env, game, action_indices)
+        action, new_board = move(env, game, action_indices, board)
 
         # if none of the actions are valid, restart the game
         if action == -1:
+            if prev_inpt_board is not None:
+                one_hot_reward = np.zeros((4))
+                one_hot_reward[prev_action] = -1
+                experience = [prev_inpt_board, one_hot_reward, inpt_board]
+                if max_exps > len(experiences):
+                    experiences.append(experience)
+                else:
+                    experiences[index] = experience
+                    index += 1
+                    if index >= max_exps:
+                        index = 0
+
             if env == LOCAL:
-                game.display()
+                #game.display()
                 game = Game()
                 game.add_random_tile()
             else:
                 driver.find_element_by_class_name("restart-button").click()
                 time.sleep(0.5)
             
-            if exp_counter * 10 > max_exps + 1000:
-                max_exps += 1000
-                print "Resizing # of experiences stored to: %d" % max_exps
-            
-            print "Final Score: %d" % score
+            #print "Final Score: %d" % score
+
+            if len(experiences) == max_exps:
+                tot_score_counter += score
+                game_counter += 1
+                if game_counter == 64:
+                    print "Average score over last %d games: %d" % (game_counter, tot_score_counter/game_counter)
+                    # avg_scores.append(tot_score_counter/game_counter)
+                    # data['experiences'] = experiences
+                    # data['epochs_trained'] = c
+                    # data['avg_scores'] = avg_scores
+                    # pickle.dump(data, open(EXPERIENCES_PATH, 'wb'))
+                    # print "Data saved!"
+                    
+                    game_counter = 0
+                    tot_score_counter = 0
+
             score = 0
-            exp_counter = 0
             board = get_board(env, game)
             inpt_board = flatten(normalize(board))
+            prev_inpt_board = None
             continue
 
         if env == WEB:
@@ -226,49 +250,47 @@ def train(env):
         else:
             new_score = game.score
 
-        reward = new_score - score
+        reward = get_reward(new_score - score)
         score = new_score
         next_inpt_board = flatten(normalize(new_board))
-
-        # Save experience
-        if index >= max_exps:
-            data['experiences'] = experiences
-            data['epochs_trained'] = c
-            pickle.dump(data, open(EXPERIENCES_PATH, 'wb'))
-            print "Experiences saved!"
-            index = 0
 
         one_hot_reward = np.zeros((4))
         one_hot_reward[action] = reward
         experience = [inpt_board, one_hot_reward, next_inpt_board]
+
         if max_exps > len(experiences):
             experiences.append(experience)
         else:
             experiences[index] = experience
-
-        index += 1
-        exp_counter += 1
+            index += 1
+            if index >= max_exps:
+                index = 0
 
         # Update board
+        prev_action = action
         board = new_board
+        prev_inpt_board = inpt_board
         inpt_board = next_inpt_board
         
         # Train the model using experience replay
-        if c > 0 and c % batch_size == 0 and batch_size < len(experiences):
+        if c > 0 and c % batch_size == 0 and len(experiences) == max_exps:
             sample = random.sample(experiences, batch_size)
-            last_states = np.array(map(lambda x: x[2], sample))
+            inpt_batch = np.array(map(lambda x: x[2], sample))
             rewards = np.array(map(lambda x: x[1], sample))
 
-            feed_dict = {inpt: last_states}
-            values = model.feed_forward(q_network, feed_dict, sess)
+            values = out.eval(feed_dict={inpt: inpt_batch}, session=sess)
 
-            y = np.add(rewards, discount * values)
-            loss = tf.reduce_sum(tf.square(y - q_network))
-            grad_op = model.train(loss)
-            save_path = saver.save(sess, MODEL_PATH)
+            y_batch = np.add(rewards, discount * values)
+            sess.run([train_opt],feed_dict = {
+                inpt: inpt_batch,
+                y: y_batch})
+
+            if c % (batch_size * 1000) == 0:
+                print "Saving model!"
+                save_path = saver.save(sess, MODEL_PATH)
 
 
-def move(env, game, action_indices):
+def move(env, game, action_indices, board):
     for i in range (4):
         moved = False
         action = action_indices[i]
@@ -298,11 +320,8 @@ def move(env, game, action_indices):
 
 
 # main
-if os.path.isfile(MODEL_PATH):
-    saver.restore(sess, MODEL_PATH)
-else:
-    init_op = tf.initialize_all_variables()
-    sess.run(init_op)
+random.seed(12345)
+sess = tf.Session()
 
 if env == WEB:
     init()
@@ -310,7 +329,8 @@ if env == WEB:
     restart.click()
     time.sleep(0.5) # allow game to load
 
-train(env)
+inpt, out = network()
+train(inpt, out, env, sess)
 
 if env == WEB:
     driver.quit()
