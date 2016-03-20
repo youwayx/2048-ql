@@ -1,6 +1,6 @@
 # 2048-ql
 
-Implementation of a 2048 AI using Q-Learning and following an algorithm very similar to the one described in [Playing Atari with Deep Reinforcement Learning](https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf). Currently, the AI plays better than random guesses but can't make it to 1024 :(.
+Implementation of a 2048 AI using Q-Learning and following an algorithm very similar to the one described in [Playing Atari with Deep Reinforcement Learning](https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf). Currently, the AI plays better than random moves but can't make it to 1024 :(.
 
 ## Getting Started
 
@@ -22,7 +22,7 @@ You can download Chromedriver here: https://sites.google.com/a/chromium.org/chro
 After unzipping the folder, there will be an executable `chromedriver` (OS X). Place `chromedriver` in `venv/bin/`. 
 Chromedriver should be located in `venv/bin/chromedriver`
 
-If you aren't using OS X, place the equivalent executable in `venv/bin/`.
+If you aren't using OS X, place the equivalent executable in `venv/bin/` and change the `CHROMEDRIVER_DIR` variable in `main.py` to the appropriate directory.
 
 ### Train the Model
 Train the model using Selenium and Chromedriver:
